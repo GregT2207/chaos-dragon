@@ -10,6 +10,7 @@ use trust_dns_resolver::{
     TokioAsyncResolver,
     config::{ResolverConfig, ResolverOpts},
     name_server::TokioConnectionProvider,
+    system_conf::read_system_conf,
 };
 
 pub struct Node {
@@ -33,11 +34,9 @@ impl Node {
         let instance_id = hostname::get()?.to_string_lossy().into_owned();
 
         let host_name = env::var("HOST_NAME").map_err(|e| Error::other(e))?;
-        let dns_resolver = TokioAsyncResolver::new(
-            ResolverConfig::default(),
-            ResolverOpts::default(),
-            TokioConnectionProvider::default(),
-        );
+        let (config, opts) = read_system_conf()?;
+        let dns_resolver =
+            TokioAsyncResolver::new(config, opts, TokioConnectionProvider::default());
         let scanner = Scanner {
             host_name,
             dns_resolver,
@@ -55,7 +54,7 @@ impl Node {
         let lookup = match scanner.dns_resolver.lookup_ip(&scanner.host_name).await {
             Ok(lookup) => lookup,
             Err(_) => {
-                println!("No sibling nodes found");
+                eprintln!("No sibling nodes found");
                 return;
             }
         };
@@ -65,6 +64,7 @@ impl Node {
         for (id, ip) in lookup.iter().enumerate() {
             siblings.push(Sibling { id, ip });
         }
+        println!("Found {} sibling nodes", siblings.len())
     }
 
     pub fn start(&self) -> Result<()> {
