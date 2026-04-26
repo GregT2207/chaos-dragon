@@ -6,3 +6,4 @@ services:
     scale: 3
     environment:
       HOST_NAME: "node"
+      SCAN_SIBLINGS_INTERVAL_MS: 5000

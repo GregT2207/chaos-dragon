@@ -2,8 +2,9 @@ mod node;
 
 use node::Node;
 
-fn main() {
-    let mut node = match Node::new() {
+#[tokio::main]
+async fn main() {
+    let node = match Node::new() {
         Ok(node) => node,
         Err(err) => {
             eprintln!("Node failed to initialise: {}", err);
