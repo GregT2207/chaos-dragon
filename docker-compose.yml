@@ -1,0 +1,8 @@
+services:
+  node:
+    build: .
+    expose:
+      - "3000"
+    scale: 3
+    environment:
+      HOST_NAME: "node"
