@@ -5,9 +5,11 @@ use std::{
     net::{IpAddr, UdpSocket},
     str::from_utf8,
     sync::Arc,
+    time::Duration,
 };
 
-use tokio::{sync::RwLock, task, time};
+use time::{Duration as TimeDuration, OffsetDateTime};
+use tokio::{sync::RwLock, task, time::interval};
 use trust_dns_resolver::{
     TokioAsyncResolver, name_server::TokioConnectionProvider, system_conf::read_system_conf,
 };
@@ -20,9 +22,11 @@ pub struct Node {
 type NodeId = usize;
 struct SiblingNode {
     ip: IpAddr,
+    last_seen: OffsetDateTime,
 }
 
 struct Scanner {
+    expiry_time: TimeDuration,
     host_name: String,
     dns_resolver: TokioAsyncResolver,
     siblings: RwLock<HashMap<NodeId, SiblingNode>>,
@@ -34,22 +38,25 @@ struct Message<'a> {
     src_ip: IpAddr,
 }
 
+const EXPOSED_ADDRESS: &str = "0.0.0.0:3000";
+
 impl Node {
     pub fn new() -> Result<Self> {
-        let instance_id = hostname::get()?.to_string_lossy().into_owned();
-
-        let host_name = env::var("HOST_NAME").map_err(|e| Error::other(e))?;
+        let sibling_expiry_time_ms = env::var("SIBLING_EXPIRY_TIME_MS")
+            .map_err(|e| Error::other(e))?
+            .parse::<i64>()
+            .map_err(|e| Error::other(e))?;
         let (config, opts) = read_system_conf()?;
-        let dns_resolver =
-            TokioAsyncResolver::new(config, opts, TokioConnectionProvider::default());
+
         let scanner = Scanner {
-            host_name,
-            dns_resolver,
+            expiry_time: TimeDuration::milliseconds(sibling_expiry_time_ms),
+            host_name: env::var("HOST_NAME").map_err(|e| Error::other(e))?,
+            dns_resolver: TokioAsyncResolver::new(config, opts, TokioConnectionProvider::default()),
             siblings: RwLock::new(HashMap::new()),
         };
 
         Ok(Self {
-            instance_id,
+            instance_id: hostname::get()?.to_string_lossy().into_owned(),
             scanner: Arc::new(scanner),
         })
     }
@@ -57,9 +64,20 @@ impl Node {
     pub async fn start(&self) -> Result<()> {
         println!("Starting up node instance {}", self.instance_id);
 
-        self.spawn_scan_siblings()?;
+        let scanner = Arc::clone(&self.scanner);
+        let scan_siblings_interval_ms = env::var("SCAN_SIBLINGS_INTERVAL_MS")
+            .map_err(|e| Error::other(e))?
+            .parse::<u64>()
+            .map_err(|e| Error::other(e))?;
+        let mut interval = interval(Duration::from_millis(scan_siblings_interval_ms));
+        task::spawn(async move {
+            loop {
+                interval.tick().await;
+                Node::scan_siblings(Arc::clone(&scanner)).await;
+            }
+        });
 
-        let socket = UdpSocket::bind("0.0.0.0:3000")?;
+        let socket = UdpSocket::bind(EXPOSED_ADDRESS)?;
         let mut buf = [0; 1024];
         loop {
             let (amt, src) = socket.recv_from(&mut buf)?;
@@ -69,24 +87,6 @@ impl Node {
                 Err(err) => eprintln!("Failed to parse message: {}", err),
             }
         }
-    }
-
-    fn spawn_scan_siblings(&self) -> Result<()> {
-        let interval_ms = env::var("SCAN_SIBLINGS_INTERVAL_MS")
-            .map_err(|e| Error::other(e))?
-            .parse::<u64>()
-            .map_err(|e| Error::other(e))?;
-        let mut interval = time::interval(time::Duration::from_millis(interval_ms));
-
-        let scanner = Arc::clone(&self.scanner);
-        task::spawn(async move {
-            loop {
-                interval.tick().await;
-                Node::scan_siblings(Arc::clone(&scanner)).await;
-            }
-        });
-
-        Ok(())
     }
 
     // Find other sibling nodes with DNS scan
@@ -100,16 +100,23 @@ impl Node {
         };
 
         let mut siblings = scanner.siblings.write().await;
-        siblings.clear();
         for (id, ip) in lookup.iter().enumerate() {
-            siblings.insert(id, SiblingNode { ip });
+            siblings.insert(
+                id,
+                SiblingNode {
+                    ip,
+                    last_seen: OffsetDateTime::now_utc(),
+                },
+            );
         }
-        println!("Found {} sibling nodes", siblings.len())
+
+        let now = OffsetDateTime::now_utc();
+        siblings.retain(|_, sibling| now - sibling.last_seen < scanner.expiry_time);
     }
 
     fn parse_message<'a>(bytes: &'a [u8], ip: IpAddr) -> Result<Message<'a>> {
-        let raw_text = Self::parse_message_get_raw_text(&bytes)?;
-        let (sibling_node_id, payload) = Self::parse_message_split_raw_text(&raw_text)?;
+        let raw_text = Self::parse_message_get_raw_text(bytes)?;
+        let (sibling_node_id, payload) = Self::parse_message_split_raw_text(raw_text)?;
 
         Ok(Message {
             target_node_id: sibling_node_id,
@@ -152,15 +159,12 @@ impl Node {
                         format!("Failed to parse sibling ID: {}", e),
                     )
                 })?;
-
-                return Ok((sibling_node_id, payload));
+                Ok((sibling_node_id, payload))
             }
-            _ => {
-                return Err(Error::new(
-                    ErrorKind::InvalidData,
-                    "Did not contain both expected parts",
-                ));
-            }
+            _ => Err(Error::new(
+                ErrorKind::InvalidData,
+                "Did not contain both expected parts",
+            )),
         }
     }
 

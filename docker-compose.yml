@@ -9,4 +9,5 @@ services:
     scale: 3
     environment:
       HOST_NAME: "node"
-      SCAN_SIBLINGS_INTERVAL_MS: 20000
+      SCAN_SIBLINGS_INTERVAL_MS: 2000
+      SIBLING_EXPIRY_TIME_MS: 6000
