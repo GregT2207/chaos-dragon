@@ -1,9 +1,12 @@
 services:
   node:
     build: .
-    expose:
-      - "3000"
+    ports:
+      - target: 3000
+        published: 0
+        protocol: "udp"
+        mode: "host"
     scale: 3
     environment:
       HOST_NAME: "node"
-      SCAN_SIBLINGS_INTERVAL_MS: 5000
+      SCAN_SIBLINGS_INTERVAL_MS: 20000

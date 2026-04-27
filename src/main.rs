@@ -12,7 +12,7 @@ async fn main() {
         }
     };
 
-    if let Err(err) = node.start() {
+    if let Err(err) = node.start().await {
         eprintln!("Node failed to start: {}", err)
     }
 }
