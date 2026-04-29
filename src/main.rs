@@ -1,4 +1,7 @@
+mod discovery;
 mod node;
+mod transport;
+mod types;
 
 use node::Node;
 
