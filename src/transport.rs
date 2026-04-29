@@ -86,3 +86,32 @@ impl Transport {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_utf8_bytes_parse_to_text() {
+        let bytes: &[u8] = &[
+            0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x2c, 0x20, 0x77, 0x6f, 0x72, 0x6c, 0x64, 0x21,
+        ];
+
+        assert_eq!(
+            Transport::bytes_to_text(bytes).expect("Expected valid UTF-8 bytes"),
+            "Hello, world!"
+        )
+    }
+
+    #[test]
+    fn invalid_utf8_bytes_fail() {
+        let bytes: &[u8] = &[0xff, 0xfe, 0xfd];
+
+        assert_eq!(
+            Transport::bytes_to_text(bytes)
+                .expect_err("Expected invalid UTF-8 bytes")
+                .kind(),
+            ErrorKind::Other
+        )
+    }
+}
