@@ -35,13 +35,16 @@ pub enum MessageDirection {
 }
 
 impl FromStr for MessageDirection {
-    type Err = ErrorKind;
+    type Err = io::Error;
 
-    fn from_str(s: &str) -> Result<Self, ErrorKind> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "req" => Ok(MessageDirection::Request),
             "res" => Ok(MessageDirection::Response),
-            _ => Err(ErrorKind::InvalidData),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid message direction",
+            )),
         }
     }
 }
@@ -51,12 +54,15 @@ pub enum MessageKind {
 }
 
 impl FromStr for MessageKind {
-    type Err = ErrorKind;
+    type Err = io::Error;
 
-    fn from_str(s: &str) -> Result<Self, ErrorKind> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "id" => Ok(MessageKind::Identity),
-            _ => Err(ErrorKind::InvalidData),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid message kind",
+            )),
         }
     }
 }
@@ -96,14 +102,20 @@ impl Transport {
             src_ip,
             direction: (*(parts
                 .get(RawMessagePart::Direction as usize)
-                .ok_or(io::ErrorKind::InvalidData)?))
+                .ok_or(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Missing message direction",
+                ))?))
             .parse()?,
             kind: (*(parts
                 .get(RawMessagePart::Kind as usize)
-                .ok_or(ErrorKind::InvalidData)?))
+                .ok_or(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Missing message kind",
+                ))?))
             .parse()?,
             payload: parts
-                .get(RawMessagePart::Kind as usize)
+                .get(RawMessagePart::Payload as usize)
                 .map(|s| s.to_string()),
         })
     }
