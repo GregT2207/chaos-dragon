@@ -1,12 +1,11 @@
 use std::{
     env,
     io::{Error, Result},
-    net::UdpSocket,
     sync::Arc,
     time::Duration,
 };
 
-use tokio::{task, time::interval};
+use tokio::{net::UdpSocket, task, time::interval};
 
 use crate::{
     discovery::Discovery,
@@ -45,10 +44,10 @@ impl Node {
             }
         });
 
-        let socket = UdpSocket::bind(EXPOSED_ADDRESS)?;
+        let socket = UdpSocket::bind(EXPOSED_ADDRESS).await?;
         let mut buf = [0; 1024];
         loop {
-            let (amt, src) = socket.recv_from(&mut buf)?;
+            let (amt, src) = socket.recv_from(&mut buf).await?;
             let message = Transport::parse_message(&buf[..amt], src.ip());
             match message {
                 Ok(message) => self.handle_message(message).await,
