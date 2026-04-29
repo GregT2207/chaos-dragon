@@ -7,7 +7,7 @@ use node::Node;
 
 #[tokio::main]
 async fn main() {
-    let node = match Node::new() {
+    let node = match Node::new().await {
         Ok(node) => node,
         Err(err) => {
             eprintln!("Node failed to initialise: {}", err);

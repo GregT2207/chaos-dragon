@@ -4,9 +4,16 @@ use std::{
     str::{FromStr, from_utf8},
 };
 
+use tokio::net::UdpSocket;
+
 use crate::types::NodeId;
 
-pub struct Transport {}
+const EXPOSED_ADDRESS: &str = "0.0.0.0:3000";
+
+pub struct Transport {
+    socket: UdpSocket,
+    buffer: [u8; 1024],
+}
 
 #[repr(usize)]
 enum RawMessagePart {
@@ -15,11 +22,11 @@ enum RawMessagePart {
     Payload,
 }
 
-pub struct Message<'a> {
+pub struct Message {
     pub src_ip: IpAddr,
     pub direction: MessageDirection,
     pub kind: MessageKind,
-    pub payload: Option<&'a str>,
+    pub payload: Option<String>,
 }
 
 pub enum MessageDirection {
@@ -55,11 +62,33 @@ impl FromStr for MessageKind {
 }
 
 impl Transport {
+    pub async fn new() -> io::Result<Self> {
+        Ok(Self {
+            socket: UdpSocket::bind(EXPOSED_ADDRESS).await?,
+            buffer: [0; 1024],
+        })
+    }
+
+    pub async fn get_message(&mut self) -> Option<Message> {
+        match self.receive_and_parse_message().await {
+            Ok(message) => Some(message),
+            Err(err) => {
+                eprintln!("Failed to receive and parse message: {}", err);
+                None
+            }
+        }
+    }
+
+    async fn receive_and_parse_message(&mut self) -> io::Result<Message> {
+        let (amt, src) = self.socket.recv_from(&mut self.buffer).await?;
+        Self::parse_message(&self.buffer[..amt], src.ip())
+    }
+
     pub async fn request_identification(dest_ip: &IpAddr) -> NodeId {
         String::from("test")
     }
 
-    pub fn parse_message<'a>(bytes: &'a [u8], src_ip: IpAddr) -> io::Result<Message<'a>> {
+    pub fn parse_message(bytes: &[u8], src_ip: IpAddr) -> io::Result<Message> {
         let text = Self::bytes_to_text(bytes)?;
         let parts = text.split('|').collect::<Vec<&str>>();
 
@@ -73,7 +102,9 @@ impl Transport {
                 .get(RawMessagePart::Kind as usize)
                 .ok_or(ErrorKind::InvalidData)?))
             .parse()?,
-            payload: parts.get(RawMessagePart::Kind as usize).copied(),
+            payload: parts
+                .get(RawMessagePart::Kind as usize)
+                .map(|s| s.to_string()),
         })
     }
 

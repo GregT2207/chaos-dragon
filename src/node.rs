@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use tokio::{net::UdpSocket, task, time::interval};
+use tokio::{sync::mpsc, task, time::interval};
 
 use crate::{
     discovery::Discovery,
@@ -15,20 +15,20 @@ use crate::{
 
 pub struct Node {
     id: NodeId,
+    transport: Transport,
     discovery: Arc<Discovery>,
 }
 
-const EXPOSED_ADDRESS: &str = "0.0.0.0:3000";
-
 impl Node {
-    pub fn new() -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         Ok(Self {
             id: hostname::get()?.to_string_lossy().into_owned(),
+            transport: Transport::new().await?,
             discovery: Arc::new(Discovery::new()?),
         })
     }
 
-    pub async fn start(&self) -> Result<()> {
+    pub async fn start(self) -> Result<()> {
         println!("Starting up node {}", self.id);
 
         let discovery = Arc::clone(&self.discovery);
@@ -40,23 +40,30 @@ impl Node {
         task::spawn(async move {
             loop {
                 interval.tick().await;
-                Arc::clone(&discovery).discover_siblings().await;
+                discovery.discover_siblings().await;
             }
         });
 
-        let socket = UdpSocket::bind(EXPOSED_ADDRESS).await?;
-        let mut buf = [0; 1024];
-        loop {
-            let (amt, src) = socket.recv_from(&mut buf).await?;
-            let message = Transport::parse_message(&buf[..amt], src.ip());
-            match message {
-                Ok(message) => self.handle_message(message).await,
-                Err(err) => eprintln!("Failed to parse message: {}", err),
+        let mut transport = self.transport;
+        let (tx, mut rx) = mpsc::channel::<Message>(32);
+        task::spawn(async move {
+            loop {
+                if let Some(message) = transport.get_message().await {
+                    if let Err(err) = tx.send(message).await {
+                        eprintln!("Error sending transport message into channel: {}", err)
+                    }
+                };
             }
+        });
+
+        while let Some(message) = rx.recv().await {
+            Self::handle_message(message).await;
         }
+
+        Ok(())
     }
 
-    async fn handle_message(&self, message: Message<'_>) {
+    pub async fn handle_message(message: Message) {
         if let Some(payload) = message.payload {
             println!("Received {} from {}", payload, message.src_ip)
         }
