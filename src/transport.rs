@@ -1,7 +1,8 @@
 use std::{
-    io::{self, ErrorKind},
+    io::{self},
     net::IpAddr,
     str::{FromStr, from_utf8},
+    sync::Arc,
 };
 
 use tokio::net::UdpSocket;
@@ -10,9 +11,14 @@ use crate::types::NodeId;
 
 const EXPOSED_ADDRESS: &str = "0.0.0.0:3000";
 
-pub struct Transport {
-    socket: UdpSocket,
+pub struct TransportReceiver {
+    socket: Arc<UdpSocket>,
     buffer: [u8; 1024],
+}
+
+#[derive(Clone)]
+pub struct TransportSender {
+    socket: Arc<UdpSocket>,
 }
 
 #[repr(usize)]
@@ -70,14 +76,21 @@ impl FromStr for MessageKind {
     }
 }
 
-impl Transport {
-    pub async fn new() -> io::Result<Self> {
-        Ok(Self {
-            socket: UdpSocket::bind(EXPOSED_ADDRESS).await?,
-            buffer: [0; 1024],
-        })
-    }
+pub async fn new() -> io::Result<(TransportReceiver, TransportSender)> {
+    let socket = Arc::new(UdpSocket::bind(EXPOSED_ADDRESS).await?);
 
+    Ok((
+        TransportReceiver {
+            socket: socket.clone(),
+            buffer: [0; 1024],
+        },
+        TransportSender {
+            socket: socket.clone(),
+        },
+    ))
+}
+
+impl TransportReceiver {
     pub async fn get_message(&mut self) -> Option<Message> {
         match self.receive_and_build_message().await {
             Ok(message) => Some(message),
@@ -91,10 +104,6 @@ impl Transport {
     async fn receive_and_build_message(&mut self) -> io::Result<Message> {
         let (amt, src) = self.socket.recv_from(&mut self.buffer).await?;
         Self::build_message(&self.buffer[..amt], src.ip())
-    }
-
-    pub async fn request_identification(dest_ip: &IpAddr) -> NodeId {
-        String::from("test")
     }
 
     pub fn build_message(bytes: &[u8], src_ip: IpAddr) -> io::Result<Message> {
@@ -133,8 +142,16 @@ impl Transport {
     }
 }
 
+impl TransportSender {
+    pub async fn request_identification(&self, dest_ip: &IpAddr) -> NodeId {
+        String::from("test")
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::io::ErrorKind;
+
     use super::*;
 
     #[test]
@@ -143,7 +160,7 @@ mod tests {
         let bytes = text.as_bytes();
 
         assert_eq!(
-            Transport::bytes_to_text(bytes).expect("Expected valid UTF-8 bytes"),
+            TransportReceiver::bytes_to_text(bytes).expect("Expected valid UTF-8 bytes"),
             text
         )
     }
@@ -153,7 +170,7 @@ mod tests {
         let bytes: &[u8] = &[0xff, 0xfe, 0xfd];
 
         assert_eq!(
-            Transport::bytes_to_text(bytes)
+            TransportReceiver::bytes_to_text(bytes)
                 .expect_err("Expected invalid UTF-8 bytes")
                 .kind(),
             ErrorKind::InvalidData
@@ -165,7 +182,7 @@ mod tests {
         let bytes = b"req|id";
         let src_ip = "192.1.2.3".parse::<IpAddr>().unwrap();
 
-        let message = Transport::build_message(bytes, src_ip)
+        let message = TransportReceiver::build_message(bytes, src_ip)
             .expect("Expected valid identity request message bytes");
 
         assert_eq!(message.src_ip, src_ip);
@@ -179,7 +196,7 @@ mod tests {
         let bytes = b"res|id|7c736c19c8f0";
         let src_ip = "192.4.5.6".parse::<IpAddr>().unwrap();
 
-        let message = Transport::build_message(bytes, src_ip)
+        let message = TransportReceiver::build_message(bytes, src_ip)
             .expect("Expected valid identity response message bytes");
 
         assert_eq!(message.src_ip, src_ip);
@@ -194,7 +211,7 @@ mod tests {
         let src_ip = "192.7.8.9".parse::<IpAddr>().unwrap();
 
         assert_eq!(
-            Transport::build_message(bytes, src_ip)
+            TransportReceiver::build_message(bytes, src_ip)
                 .expect_err("Expected invalid message bytes")
                 .kind(),
             ErrorKind::InvalidData
@@ -207,7 +224,7 @@ mod tests {
         let src_ip = "192.7.8.9".parse::<IpAddr>().unwrap();
 
         assert_eq!(
-            Transport::build_message(bytes, src_ip)
+            TransportReceiver::build_message(bytes, src_ip)
                 .expect_err("Expected invalid message bytes")
                 .kind(),
             ErrorKind::InvalidData

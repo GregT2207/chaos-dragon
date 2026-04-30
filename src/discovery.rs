@@ -12,7 +12,7 @@ use trust_dns_resolver::{
     TokioAsyncResolver, name_server::TokioConnectionProvider, system_conf::read_system_conf,
 };
 
-use crate::{transport::Transport, types::NodeId};
+use crate::{transport::TransportSender, types::NodeId};
 
 pub struct Discovery {
     pub siblings: RwLock<HashMap<NodeId, Sibling>>,
@@ -42,7 +42,7 @@ impl Discovery {
         })
     }
 
-    pub async fn discover_siblings(&self) {
+    pub async fn discover_siblings(&self, transport_sender: TransportSender) {
         // Find other sibling nodes with DNS scan
         let lookup = match self.dns_resolver.lookup_ip(&self.host_name).await {
             Ok(lookup) => lookup,
@@ -55,7 +55,8 @@ impl Discovery {
 
         // Poll each node for identification
         let poll_handles = discovered_ips.into_iter().map(|ip| {
-            task::spawn(async move { (Transport::request_identification(&ip).await, ip) })
+            let sender = transport_sender.clone();
+            task::spawn(async move { (sender.request_identification(&ip).await, ip) })
         });
         let poll_responses = join_all(poll_handles).await;
 
