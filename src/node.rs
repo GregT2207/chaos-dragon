@@ -25,10 +25,11 @@ pub struct Node {
 
 impl Node {
     pub async fn new() -> Result<Self> {
-        let (transport_receiver, transport_sender) = new_transport().await?;
+        let id = hostname::get()?.to_string_lossy().into_owned();
+        let (transport_receiver, transport_sender) = new_transport(id.clone()).await?;
 
         Ok(Self {
-            id: hostname::get()?.to_string_lossy().into_owned(),
+            id: id.clone(),
             transport_receiver,
             transport_sender,
             discovery: Arc::new(Discovery::new()?),
@@ -66,9 +67,10 @@ impl Node {
 
         while let Some(message) = rx.recv().await {
             Self::handle_message(
+                &message,
+                &self.id,
                 self.transport_sender.clone(),
                 self.discovery.clone(),
-                &message,
             )
             .await;
         }
@@ -77,9 +79,10 @@ impl Node {
     }
 
     pub async fn handle_message(
+        message: &Message,
+        node_id: &NodeId,
         transport_sender: TransportSender,
         discovery: Arc<Discovery>,
-        message: &Message,
     ) {
         println!(
             "Received {:?} | {:?} | {:?} from {:?}",
@@ -89,12 +92,51 @@ impl Node {
                 .payload
                 .clone()
                 .unwrap_or("(no payload)".to_string()),
-            message.src_ip
+            message.src_node_id
         );
 
         match (&message.kind, &message.direction) {
-            (MessageKind::Identity, MessageDirection::Request) => (),
-            (MessageKind::Identity, MessageDirection::Response) => (),
+            (MessageKind::Identity, MessageDirection::Request) => {
+                if let Err(err) =
+                    Self::respond_to_identification_request(&message, transport_sender).await
+                {
+                    eprintln!("Failed to respond to identification request: {}", err);
+                };
+            }
+            (MessageKind::Identity, MessageDirection::Response) => {
+                if let Err(err) = Self::handle_identification_response(&message, discovery).await {
+                    eprintln!("Failed to handle identification response: {}", err);
+                };
+            }
         };
+    }
+
+    async fn respond_to_identification_request(
+        message: &Message,
+        transport_sender: TransportSender,
+    ) -> Result<()> {
+        match message.src_ip {
+            Some(src_ip) => {
+                transport_sender.respond_identification(src_ip).await?;
+
+                Ok(())
+            }
+            None => {
+                return Err(Error::other("No source IP address found"));
+            }
+        }
+    }
+
+    async fn handle_identification_response(
+        message: &Message,
+        discovery: Arc<Discovery>,
+    ) -> Result<()> {
+        if let Some(src_ip) = message.src_ip {
+            discovery
+                .record_sibling(message.src_node_id.clone(), src_ip)
+                .await;
+        }
+
+        Ok(())
     }
 }

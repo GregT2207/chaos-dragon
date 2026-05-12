@@ -2,12 +2,13 @@ services:
   node:
     build: .
     ports:
-      - target: 3000
+      - target: ${INTERNAL_PORT}
         published: 0
         protocol: "udp"
         mode: "host"
     scale: 3
     environment:
       HOST_NAME: "node"
-      DISCOVER_SIBLINGS_INTERVAL_MS: 2000
+      INTERNAL_PORT: ${INTERNAL_PORT}
+      DISCOVER_SIBLINGS_INTERVAL_MS: 5000
       SIBLING_EXPIRY_TIME_MS: 6000

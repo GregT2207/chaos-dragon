@@ -1,6 +1,7 @@
 use std::{
-    io::{self},
-    net::IpAddr,
+    env, fmt,
+    io::{self, Error},
+    net::{IpAddr, SocketAddr},
     str::{FromStr, from_utf8},
     sync::Arc,
 };
@@ -9,20 +10,23 @@ use tokio::net::UdpSocket;
 
 use crate::types::NodeId;
 
-const EXPOSED_ADDRESS: &str = "0.0.0.0:3000";
+type Buffer = [u8; 1024];
 
 pub struct TransportReceiver {
     socket: Arc<UdpSocket>,
-    buffer: [u8; 1024],
+    buffer: Buffer,
 }
 
 #[derive(Clone)]
 pub struct TransportSender {
     socket: Arc<UdpSocket>,
+    src_node_id: NodeId,
+    internal_port: u16,
 }
 
 #[repr(usize)]
 enum RawMessagePart {
+    SrcNodeId,
     Direction,
     Kind,
     Payload,
@@ -30,10 +34,22 @@ enum RawMessagePart {
 
 #[derive(Debug)]
 pub struct Message {
-    pub src_ip: IpAddr,
+    pub src_ip: Option<IpAddr>, // derived on message receipt, not added on message construction
+    pub src_node_id: NodeId,
     pub direction: MessageDirection,
     pub kind: MessageKind,
     pub payload: Option<String>,
+}
+
+impl fmt::Display for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}|{}|{}", self.src_node_id, self.direction, self.kind)?;
+        if let Some(payload) = &self.payload {
+            write!(f, "|{}", payload)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -57,6 +73,15 @@ impl FromStr for MessageDirection {
     }
 }
 
+impl fmt::Display for MessageDirection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Request => write!(f, "req"),
+            Self::Response => write!(f, "res"),
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Debug)]
 pub enum MessageKind {
     Identity,
@@ -76,8 +101,23 @@ impl FromStr for MessageKind {
     }
 }
 
-pub async fn new() -> io::Result<(TransportReceiver, TransportSender)> {
-    let socket = Arc::new(UdpSocket::bind(EXPOSED_ADDRESS).await?);
+impl fmt::Display for MessageKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Identity => write!(f, "id"),
+        }
+    }
+}
+
+pub async fn new(src_node_id: NodeId) -> io::Result<(TransportReceiver, TransportSender)> {
+    let internal_ip_addr = IpAddr::from([0, 0, 0, 0]);
+    let internal_port = env::var("INTERNAL_PORT")
+        .map_err(|e| Error::other(e))?
+        .parse::<u16>()
+        .map_err(|e| Error::other(e))?;
+    let socket_addr = SocketAddr::new(internal_ip_addr, internal_port);
+
+    let socket = Arc::new(UdpSocket::bind(socket_addr).await?);
 
     Ok((
         TransportReceiver {
@@ -86,6 +126,8 @@ pub async fn new() -> io::Result<(TransportReceiver, TransportSender)> {
         },
         TransportSender {
             socket: socket.clone(),
+            src_node_id,
+            internal_port: internal_port,
         },
     ))
 }
@@ -95,7 +137,7 @@ impl TransportReceiver {
         match self.receive_and_build_message().await {
             Ok(message) => Some(message),
             Err(err) => {
-                eprintln!("Failed to receive and parse message: {err}");
+                eprintln!("Failed to receive and build message: {err}");
                 None
             }
         }
@@ -107,11 +149,15 @@ impl TransportReceiver {
     }
 
     pub fn build_message(bytes: &[u8], src_ip: IpAddr) -> io::Result<Message> {
-        let text = Self::bytes_to_text(bytes)?;
+        let text = Self::parse_bytes_to_text(bytes)?;
         let parts = text.split('|').collect::<Vec<&str>>();
 
         Ok(Message {
-            src_ip,
+            src_ip: Some(src_ip),
+            src_node_id: (*(parts.get(RawMessagePart::SrcNodeId as usize).ok_or(
+                io::Error::new(io::ErrorKind::InvalidData, "Missing source node ID"),
+            )?))
+            .to_string(),
             direction: (*(parts
                 .get(RawMessagePart::Direction as usize)
                 .ok_or(io::Error::new(
@@ -132,7 +178,7 @@ impl TransportReceiver {
         })
     }
 
-    fn bytes_to_text(bytes: &[u8]) -> io::Result<&str> {
+    fn parse_bytes_to_text(bytes: &[u8]) -> io::Result<&str> {
         from_utf8(bytes).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -143,8 +189,37 @@ impl TransportReceiver {
 }
 
 impl TransportSender {
-    pub async fn request_identification(&self, dest_ip: &IpAddr) -> NodeId {
-        String::from("test")
+    pub async fn request_identification(&self, dest_ip: IpAddr) -> io::Result<()> {
+        let message = Message {
+            src_ip: None,
+            src_node_id: self.src_node_id.clone(),
+            direction: MessageDirection::Request,
+            kind: MessageKind::Identity,
+            payload: None,
+        };
+
+        self.send_message(message, dest_ip).await
+    }
+
+    pub async fn respond_identification(&self, dest_ip: IpAddr) -> io::Result<()> {
+        let message = Message {
+            src_ip: None,
+            src_node_id: self.src_node_id.clone(),
+            direction: MessageDirection::Response,
+            kind: MessageKind::Identity,
+            payload: None,
+        };
+
+        self.send_message(message, dest_ip).await
+    }
+
+    pub async fn send_message(&self, message: Message, dest_ip: IpAddr) -> io::Result<()> {
+        let destination_socket_addr = SocketAddr::new(dest_ip, self.internal_port);
+        self.socket
+            .send_to(message.to_string().as_bytes(), destination_socket_addr)
+            .await?;
+
+        Ok(())
     }
 }
 
@@ -160,17 +235,17 @@ mod tests {
         let bytes = text.as_bytes();
 
         assert_eq!(
-            TransportReceiver::bytes_to_text(bytes).expect("Expected valid UTF-8 bytes"),
+            TransportReceiver::parse_bytes_to_text(bytes).expect("Expected valid UTF-8 bytes"),
             text
         )
     }
 
     #[test]
-    fn it_rejects_invalid_utf8_bytes() {
+    fn it_rejects_parsing_invalid_utf8_bytes() {
         let bytes: &[u8] = &[0xff, 0xfe, 0xfd];
 
         assert_eq!(
-            TransportReceiver::bytes_to_text(bytes)
+            TransportReceiver::parse_bytes_to_text(bytes)
                 .expect_err("Expected invalid UTF-8 bytes")
                 .kind(),
             ErrorKind::InvalidData
@@ -179,13 +254,13 @@ mod tests {
 
     #[test]
     fn it_builds_identity_request_message() {
-        let bytes = b"req|id";
+        let bytes = b"b62168f4fa9a|req|id";
         let src_ip = "192.1.2.3".parse::<IpAddr>().unwrap();
 
         let message = TransportReceiver::build_message(bytes, src_ip)
             .expect("Expected valid identity request message bytes");
 
-        assert_eq!(message.src_ip, src_ip);
+        assert_eq!(message.src_node_id, "b62168f4fa9a");
         assert_eq!(message.direction, MessageDirection::Request);
         assert_eq!(message.kind, MessageKind::Identity);
         assert_eq!(message.payload, None);
@@ -193,13 +268,13 @@ mod tests {
 
     #[test]
     fn it_builds_identity_response_message() {
-        let bytes = b"res|id|7c736c19c8f0";
-        let src_ip = "192.4.5.6".parse::<IpAddr>().unwrap();
+        let bytes = b"b62168f4fa9a|res|id|7c736c19c8f0";
+        let src_ip = "192.1.2.4".parse::<IpAddr>().unwrap();
 
         let message = TransportReceiver::build_message(bytes, src_ip)
             .expect("Expected valid identity response message bytes");
 
-        assert_eq!(message.src_ip, src_ip);
+        assert_eq!(message.src_node_id, "b62168f4fa9a");
         assert_eq!(message.direction, MessageDirection::Response);
         assert_eq!(message.kind, MessageKind::Identity);
         assert_eq!(message.payload, Some("7c736c19c8f0".to_string()));
@@ -207,8 +282,8 @@ mod tests {
 
     #[test]
     fn it_rejects_invalid_message_direction() {
-        let bytes = b"doesntexist|identity";
-        let src_ip = "192.7.8.9".parse::<IpAddr>().unwrap();
+        let bytes = b"b62168f4fa9a|doesntexist|identity";
+        let src_ip = "192.1.2.5".parse::<IpAddr>().unwrap();
 
         assert_eq!(
             TransportReceiver::build_message(bytes, src_ip)
@@ -220,8 +295,8 @@ mod tests {
 
     #[test]
     fn it_rejects_invalid_message_kind() {
-        let bytes = b"req|doesntexist";
-        let src_ip = "192.7.8.9".parse::<IpAddr>().unwrap();
+        let bytes = b"b62168f4fa9a|req|doesntexist";
+        let src_ip = "192.1.2.6".parse::<IpAddr>().unwrap();
 
         assert_eq!(
             TransportReceiver::build_message(bytes, src_ip)

@@ -5,7 +5,6 @@ use std::{
     net::IpAddr,
 };
 
-use futures::future::join_all;
 use time::{Duration as TimeDuration, OffsetDateTime};
 use tokio::{sync::RwLock, task};
 use trust_dns_resolver::{
@@ -43,6 +42,11 @@ impl Discovery {
     }
 
     pub async fn discover_siblings(&self, transport_sender: TransportSender) {
+        // Remove expired sibling records
+        let mut siblings = self.siblings.write().await;
+        let now = OffsetDateTime::now_utc();
+        siblings.retain(|_, sibling| now - sibling.last_seen < self.sibling_expiry_time);
+
         // Find other sibling nodes with DNS scan
         let lookup = match self.dns_resolver.lookup_ip(&self.host_name).await {
             Ok(lookup) => lookup,
@@ -54,28 +58,22 @@ impl Discovery {
         let discovered_ips: HashSet<IpAddr> = lookup.into_iter().collect();
 
         // Poll each node for identification
-        let poll_handles = discovered_ips.into_iter().map(|ip| {
+        for ip in discovered_ips {
             let sender = transport_sender.clone();
-            task::spawn(async move { (sender.request_identification(&ip).await, ip) })
-        });
-        let poll_responses = join_all(poll_handles).await;
-
-        // Update siblings with refreshed timestamp
-        let mut siblings = self.siblings.write().await;
-        for response in poll_responses {
-            if let Ok(response) = response {
-                siblings.insert(
-                    response.0,
-                    Sibling {
-                        ip: response.1,
-                        last_seen: OffsetDateTime::now_utc(),
-                    },
-                );
-            }
+            task::spawn(async move { (sender.request_identification(ip).await, ip) });
         }
+    }
 
-        // Remove expired sibling records
-        let now = OffsetDateTime::now_utc();
-        siblings.retain(|_, sibling| now - sibling.last_seen < self.sibling_expiry_time);
+    pub async fn record_sibling(&self, sibling_id: NodeId, sibling_ip: IpAddr) {
+        println!("Mapping sibling {} to {}", &sibling_id, &sibling_ip);
+
+        let mut siblings = self.siblings.write().await;
+        siblings.insert(
+            sibling_id,
+            Sibling {
+                ip: sibling_ip,
+                last_seen: OffsetDateTime::now_utc(),
+            },
+        );
     }
 }
