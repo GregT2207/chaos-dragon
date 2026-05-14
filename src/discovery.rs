@@ -13,16 +13,25 @@ use trust_dns_resolver::{
 
 use crate::{transport::TransportSender, types::NodeId};
 
+pub type SiblingsMap = HashMap<NodeId, Sibling>;
+
 pub struct Discovery {
-    pub siblings: RwLock<HashMap<NodeId, Sibling>>,
+    pub siblings: RwLock<SiblingsMap>,
     sibling_expiry_time: TimeDuration,
     host_name: String,
     dns_resolver: TokioAsyncResolver,
 }
 
+#[derive(Debug)]
 pub struct Sibling {
     pub ip: IpAddr,
-    last_seen: OffsetDateTime,
+    pub last_seen: OffsetDateTime,
+}
+
+impl PartialEq for Sibling {
+    fn eq(&self, other: &Self) -> bool {
+        self.ip == other.ip
+    }
 }
 
 impl Discovery {
@@ -75,5 +84,12 @@ impl Discovery {
                 last_seen: OffsetDateTime::now_utc(),
             },
         );
+    }
+
+    pub async fn record_siblings(&self, new_siblings: SiblingsMap) {
+        let mut siblings = self.siblings.write().await;
+        siblings.extend(new_siblings);
+
+        println!("Mapping {} siblings", siblings.len());
     }
 }

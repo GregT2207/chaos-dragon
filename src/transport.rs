@@ -85,6 +85,7 @@ impl fmt::Display for MessageDirection {
 #[derive(PartialEq, Eq, Debug)]
 pub enum MessageKind {
     Identity,
+    Gossip,
 }
 
 impl FromStr for MessageKind {
@@ -93,6 +94,7 @@ impl FromStr for MessageKind {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "id" => Ok(MessageKind::Identity),
+            "goss" => Ok(MessageKind::Gossip),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Invalid message kind {s}"),
@@ -105,6 +107,7 @@ impl fmt::Display for MessageKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Identity => write!(f, "id"),
+            Self::Gossip => write!(f, "goss"),
         }
     }
 }
@@ -190,30 +193,60 @@ impl TransportReceiver {
 
 impl TransportSender {
     pub async fn request_identification(&self, dest_ip: IpAddr) -> io::Result<()> {
-        let message = Message {
-            src_ip: None,
-            src_node_id: self.src_node_id.clone(),
-            direction: MessageDirection::Request,
-            kind: MessageKind::Identity,
-            payload: None,
-        };
-
-        self.send_message(message, dest_ip).await
+        self.send_request_message(MessageKind::Identity, None, dest_ip)
+            .await
     }
 
     pub async fn respond_identification(&self, dest_ip: IpAddr) -> io::Result<()> {
+        self.send_response_message(MessageKind::Identity, None, dest_ip)
+            .await
+    }
+
+    pub async fn request_gossip(&self, dest_ip: IpAddr) -> io::Result<()> {
+        self.send_request_message(MessageKind::Identity, None, dest_ip)
+            .await
+    }
+
+    pub async fn respond_gossip(&self, dest_ip: IpAddr, payload: String) -> io::Result<()> {
+        self.send_response_message(MessageKind::Identity, Some(payload), dest_ip)
+            .await
+    }
+
+    async fn send_request_message(
+        &self,
+        kind: MessageKind,
+        payload: Option<String>,
+        dest_ip: IpAddr,
+    ) -> io::Result<()> {
+        self.send_message(MessageDirection::Request, kind, payload, dest_ip)
+            .await
+    }
+
+    async fn send_response_message(
+        &self,
+        kind: MessageKind,
+        payload: Option<String>,
+        dest_ip: IpAddr,
+    ) -> io::Result<()> {
+        self.send_message(MessageDirection::Response, kind, payload, dest_ip)
+            .await
+    }
+
+    async fn send_message(
+        &self,
+        direction: MessageDirection,
+        kind: MessageKind,
+        payload: Option<String>,
+        dest_ip: IpAddr,
+    ) -> io::Result<()> {
         let message = Message {
             src_ip: None,
             src_node_id: self.src_node_id.clone(),
-            direction: MessageDirection::Response,
-            kind: MessageKind::Identity,
-            payload: None,
+            direction,
+            kind,
+            payload,
         };
 
-        self.send_message(message, dest_ip).await
-    }
-
-    pub async fn send_message(&self, message: Message, dest_ip: IpAddr) -> io::Result<()> {
         let destination_socket_addr = SocketAddr::new(dest_ip, self.internal_port);
         self.socket
             .send_to(message.to_string().as_bytes(), destination_socket_addr)
@@ -225,9 +258,8 @@ impl TransportSender {
 
 #[cfg(test)]
 mod tests {
-    use std::io::ErrorKind;
-
     use super::*;
+    use std::io::ErrorKind;
 
     #[test]
     fn it_parses_valid_utf8_bytes_to_text() {
@@ -247,6 +279,32 @@ mod tests {
         assert_eq!(
             TransportReceiver::parse_bytes_to_text(bytes)
                 .expect_err("Expected invalid UTF-8 bytes")
+                .kind(),
+            ErrorKind::InvalidData
+        )
+    }
+
+    #[test]
+    fn it_rejects_invalid_message_direction() {
+        let bytes = b"b62168f4fa9a|doesntexist|identity";
+        let src_ip = "192.1.2.5".parse::<IpAddr>().unwrap();
+
+        assert_eq!(
+            TransportReceiver::build_message(bytes, src_ip)
+                .expect_err("Expected invalid message bytes")
+                .kind(),
+            ErrorKind::InvalidData
+        )
+    }
+
+    #[test]
+    fn it_rejects_invalid_message_kind() {
+        let bytes = b"b62168f4fa9a|req|doesntexist";
+        let src_ip = "192.1.2.6".parse::<IpAddr>().unwrap();
+
+        assert_eq!(
+            TransportReceiver::build_message(bytes, src_ip)
+                .expect_err("Expected invalid message bytes")
                 .kind(),
             ErrorKind::InvalidData
         )
@@ -281,28 +339,35 @@ mod tests {
     }
 
     #[test]
-    fn it_rejects_invalid_message_direction() {
-        let bytes = b"b62168f4fa9a|doesntexist|identity";
+    fn it_builds_gossip_request_message() {
+        let bytes = b"b62168f4fa9a|req|goss";
         let src_ip = "192.1.2.5".parse::<IpAddr>().unwrap();
 
-        assert_eq!(
-            TransportReceiver::build_message(bytes, src_ip)
-                .expect_err("Expected invalid message bytes")
-                .kind(),
-            ErrorKind::InvalidData
-        )
+        let message = TransportReceiver::build_message(bytes, src_ip)
+            .expect("Expected valid gossip request message bytes");
+
+        assert_eq!(message.src_node_id, "b62168f4fa9a");
+        assert_eq!(message.direction, MessageDirection::Request);
+        assert_eq!(message.kind, MessageKind::Gossip);
+        assert_eq!(message.payload, None);
     }
 
     #[test]
-    fn it_rejects_invalid_message_kind() {
-        let bytes = b"b62168f4fa9a|req|doesntexist";
+    fn it_builds_gossip_response_message() {
+        let bytes = b"b62168f4fa9a|res|goss|7c736c19c8f0:192.2.1.1,7c736c19c8f1:192.2.1.2,7c736c19c8f2:192.2.1.3";
         let src_ip = "192.1.2.6".parse::<IpAddr>().unwrap();
 
+        let message = TransportReceiver::build_message(bytes, src_ip)
+            .expect("Expected valid gossip response message bytes");
+
+        assert_eq!(message.src_node_id, "b62168f4fa9a");
+        assert_eq!(message.direction, MessageDirection::Response);
+        assert_eq!(message.kind, MessageKind::Gossip);
         assert_eq!(
-            TransportReceiver::build_message(bytes, src_ip)
-                .expect_err("Expected invalid message bytes")
-                .kind(),
-            ErrorKind::InvalidData
-        )
+            message.payload,
+            Some(
+                "7c736c19c8f0:192.2.1.1,7c736c19c8f1:192.2.1.2,7c736c19c8f2:192.2.1.3".to_string()
+            )
+        );
     }
 }
