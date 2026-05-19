@@ -3,6 +3,7 @@ use std::{
     env,
     io::{Error, Result},
     net::IpAddr,
+    sync::Arc,
 };
 
 use time::{Duration as TimeDuration, OffsetDateTime};
@@ -11,7 +12,7 @@ use trust_dns_resolver::{
     TokioAsyncResolver, name_server::TokioConnectionProvider, system_conf::read_system_conf,
 };
 
-use crate::{transport::TransportSender, types::NodeId};
+use crate::{simulation::SimulatedState, transport::TransportSender, types::NodeId};
 
 pub type SiblingsMap = HashMap<NodeId, Sibling>;
 
@@ -20,6 +21,7 @@ pub struct Discovery {
     sibling_expiry_time: TimeDuration,
     host_name: String,
     dns_resolver: TokioAsyncResolver,
+    simulated_state: Arc<SimulatedState>,
 }
 
 #[derive(Debug)]
@@ -35,7 +37,7 @@ impl PartialEq for Sibling {
 }
 
 impl Discovery {
-    pub fn new() -> Result<Self> {
+    pub fn new(simulated_state: Arc<SimulatedState>) -> Result<Self> {
         let sibling_expiry_time_ms = env::var("SIBLING_EXPIRY_TIME_MS")
             .map_err(|e| Error::other(e))?
             .parse::<i64>()
@@ -47,23 +49,21 @@ impl Discovery {
             sibling_expiry_time: TimeDuration::milliseconds(sibling_expiry_time_ms),
             host_name: env::var("HOST_NAME").map_err(|e| Error::other(e))?,
             dns_resolver: TokioAsyncResolver::new(config, opts, TokioConnectionProvider::default()),
+            simulated_state,
         })
     }
 
-    pub async fn discover_siblings(&self, transport_sender: TransportSender) {
+    pub async fn discover_siblings(&self, transport_sender: TransportSender) -> Result<()> {
         // Remove expired sibling records
         let mut siblings = self.siblings.write().await;
         let now = OffsetDateTime::now_utc();
         siblings.retain(|_, sibling| now - sibling.last_seen < self.sibling_expiry_time);
 
         // Find other sibling nodes with DNS scan
-        let lookup = match self.dns_resolver.lookup_ip(&self.host_name).await {
-            Ok(lookup) => lookup,
-            Err(_) => {
-                eprintln!("No sibling nodes found");
-                return;
-            }
-        };
+        if !self.simulated_state.dns_available() {
+            Error::other("DNS lookup failed");
+        }
+        let lookup = self.dns_resolver.lookup_ip(&self.host_name).await?;
         let discovered_ips: HashSet<IpAddr> = lookup.into_iter().collect();
 
         // Poll each node for identification
@@ -71,6 +71,8 @@ impl Discovery {
             let sender = transport_sender.clone();
             task::spawn(async move { (sender.request_identification(ip).await, ip) });
         }
+
+        Ok(())
     }
 
     pub async fn record_sibling(&self, sibling_id: NodeId, sibling_ip: IpAddr) {

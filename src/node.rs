@@ -11,6 +11,7 @@ use tokio::{sync::mpsc, task, time::interval};
 
 use crate::{
     discovery::{Discovery, Sibling, SiblingsMap},
+    simulation::SimulatedState,
     transport::{
         Message, MessageDirection, MessageKind, TransportReceiver, TransportSender,
         new as new_transport,
@@ -20,27 +21,28 @@ use crate::{
 
 pub struct Node {
     id: NodeId,
+    discovery: Arc<Discovery>,
     transport_receiver: TransportReceiver,
     transport_sender: TransportSender,
-    discovery: Arc<Discovery>,
 }
 
 impl Node {
-    pub async fn new() -> Result<Self> {
+    pub async fn new(simulated_state: Arc<SimulatedState>) -> Result<Self> {
         let id = hostname::get()?.to_string_lossy().into_owned();
         let (transport_receiver, transport_sender) = new_transport(id.clone()).await?;
 
         Ok(Self {
             id: id.clone(),
+            discovery: Arc::new(Discovery::new(simulated_state)?),
             transport_receiver,
             transport_sender,
-            discovery: Arc::new(Discovery::new()?),
         })
     }
 
     pub async fn start(self) -> Result<()> {
         println!("Starting up node {}", self.id);
 
+        // Periodically discover siblings
         let transport_sender = self.transport_sender.clone();
         let discovery = Arc::clone(&self.discovery);
         let discover_siblings_interval_ms = env::var("DISCOVER_SIBLINGS_INTERVAL_MS")
@@ -51,22 +53,26 @@ impl Node {
         task::spawn(async move {
             loop {
                 interval.tick().await;
-                discovery.discover_siblings(transport_sender.clone()).await;
+                if let Err(err) = discovery.discover_siblings(transport_sender.clone()).await {
+                    eprintln!("Error discovering siblings: {}", err);
+                }
             }
         });
 
+        // Monitor inbound messages and deliver them into the channel
         let (tx, mut rx) = mpsc::channel::<Message>(32);
         let mut transport_receiver = self.transport_receiver;
         task::spawn(async move {
             loop {
                 if let Some(message) = transport_receiver.get_message().await {
                     if let Err(err) = tx.send(message).await {
-                        eprintln!("Error sending transport message into channel: {}", err)
+                        eprintln!("Error sending transport message into channel: {}", err);
                     }
                 };
             }
         });
 
+        // Handle inbound messages
         while let Some(message) = rx.recv().await {
             Self::handle_message(
                 &message,
