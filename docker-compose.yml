@@ -7,8 +7,10 @@ services:
         protocol: "udp"
         mode: "host"
     scale: 3
+    tty: true
     environment:
       HOST_NAME: "node"
       INTERNAL_PORT: ${INTERNAL_PORT}
+      RUST_LOG: "info"
       DISCOVER_SIBLINGS_INTERVAL_MS: 5000
       SIBLING_EXPIRY_TIME_MS: 6000

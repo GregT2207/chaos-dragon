@@ -10,6 +10,7 @@ use std::{
     time::Duration,
 };
 
+use log::info;
 use time::{Duration as TimeDuration, OffsetDateTime};
 use tokio::{sync::RwLock, task, time::sleep};
 use trust_dns_resolver::{
@@ -66,7 +67,7 @@ impl Discovery {
         if !self.simulated_state.dns_available() {
             let dns_backoff_seconds = self.dns_backoff_seconds.load(Ordering::Relaxed);
             if dns_backoff_seconds > 0 {
-                println!(
+                info!(
                     "Waiting {} seconds before attempting another DNS scan",
                     dns_backoff_seconds
                 );
@@ -102,12 +103,11 @@ impl Discovery {
             task::spawn(async move { (sender.request_identification(ip).await, ip) });
         }
 
+        info!("Aware of {} siblings", siblings.len());
         Ok(())
     }
 
     pub async fn record_sibling(&self, sibling_id: NodeId, sibling_ip: IpAddr) {
-        println!("Mapping sibling {} to {}", &sibling_id, &sibling_ip);
-
         let mut siblings = self.siblings.write().await;
         siblings.insert(
             sibling_id,
@@ -121,7 +121,5 @@ impl Discovery {
     pub async fn record_siblings(&self, new_siblings: SiblingsMap) {
         let mut siblings = self.siblings.write().await;
         siblings.extend(new_siblings);
-
-        println!("Mapping {} siblings", siblings.len());
     }
 }

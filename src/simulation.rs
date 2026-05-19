@@ -1,3 +1,4 @@
+use log::info;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use std::{
     sync::{
@@ -28,13 +29,13 @@ impl Simulation {
     }
 
     pub async fn start(&mut self) {
-        println!("Starting chaos simulation");
+        info!("Starting chaos simulation");
         loop {
             sleep(Duration::from_secs(self.rng.random_range(3..30))).await;
 
             match self.rng.random_range(0..=1) {
                 0 => self.dns_failure().await,
-                _ => println!("It's your lucky day, punk"),
+                _ => info!("It's your lucky day, punk"),
             }
         }
     }
@@ -45,7 +46,7 @@ impl Simulation {
         }
 
         let failure_seconds = self.rng.random_range(1..=10);
-        println!("Simulating DNS failure for {} seconds", failure_seconds);
+        info!("DNS failure for {} seconds", failure_seconds);
 
         self.state.dns_available.store(false, Ordering::Relaxed);
         sleep(Duration::from_secs(failure_seconds)).await;

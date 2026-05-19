@@ -7,6 +7,7 @@ use std::{
 };
 
 use futures::future::join_all;
+use log::{error, info};
 use time::OffsetDateTime;
 use tokio::{sync::mpsc, task, time::interval};
 
@@ -41,7 +42,7 @@ impl Node {
     }
 
     pub async fn start(self) -> Result<()> {
-        println!("Starting up node {}", self.id);
+        info!("Starting up node {}", self.id);
 
         // Periodically discover siblings
         let transport_sender = self.transport_sender.clone();
@@ -55,7 +56,7 @@ impl Node {
             loop {
                 interval.tick().await;
                 if let Err(err) = discovery.discover_siblings(transport_sender.clone()).await {
-                    eprintln!("Error discovering siblings: {}", err);
+                    error!("Failed to discover siblings: {}", err);
                     let target_ips: Vec<_> = {
                         let siblings = discovery.siblings.read().await;
                         siblings.values().map(|sibling| sibling.ip).collect()
@@ -75,7 +76,7 @@ impl Node {
             loop {
                 if let Some(message) = transport_receiver.get_message().await {
                     if let Err(err) = tx.send(message).await {
-                        eprintln!("Error sending transport message into channel: {}", err);
+                        error!("Failed to send transport message into channel: {}", err);
                     }
                 };
             }
@@ -99,15 +100,20 @@ impl Node {
         transport_sender: TransportSender,
         discovery: Arc<Discovery>,
     ) {
-        println!(
-            "Received {:?} | {:?} | {:?} from {:?}",
-            message.kind,
-            message.direction,
-            message
-                .payload
-                .clone()
-                .unwrap_or("(no payload)".to_string()),
-            message.src_node_id
+        info!(
+            "Handling {} for \"{}\" from {}{}",
+            if message.direction == MessageDirection::Request {
+                "request"
+            } else {
+                "response"
+            },
+            message.kind.to_string().to_lowercase(),
+            message.src_node_id,
+            if let Some(payload) = message.payload.clone() {
+                format!(": {}", payload.to_string())
+            } else {
+                "".to_string()
+            },
         );
 
         match (&message.kind, &message.direction) {
@@ -115,24 +121,24 @@ impl Node {
                 if let Err(err) =
                     Self::handle_identification_request(&message, transport_sender).await
                 {
-                    eprintln!("Failed to respond to identification request: {}", err);
+                    error!("Failed to respond to identification request: {}", err);
                 };
             }
             (MessageKind::Identity, MessageDirection::Response) => {
                 if let Err(err) = Self::handle_identification_response(&message, discovery).await {
-                    eprintln!("Failed to handle identification response: {}", err);
+                    error!("Failed to handle identification response: {}", err);
                 };
             }
             (MessageKind::Gossip, MessageDirection::Request) => {
                 if let Err(err) =
                     Self::handle_gossip_request(&message, transport_sender, discovery).await
                 {
-                    eprintln!("Failed to handle gossip request: {}", err);
+                    error!("Failed to handle gossip request: {}", err);
                 };
             }
             (MessageKind::Gossip, MessageDirection::Response) => {
                 if let Err(err) = Self::handle_gossip_response(&message, discovery).await {
-                    eprintln!("Failed to handle gossip response: {}", err);
+                    error!("Failed to handle gossip response: {}", err);
                 };
             }
         };

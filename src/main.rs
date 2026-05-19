@@ -4,16 +4,17 @@ mod simulation;
 mod transport;
 mod types;
 
-use std::time::Duration;
-
+use crate::simulation::Simulation;
+use log::error;
 use node::Node;
 use rand::RngExt;
+use std::time::Duration;
 use tokio::{task, time::sleep};
-
-use crate::simulation::Simulation;
 
 #[tokio::main]
 async fn main() {
+    pretty_env_logger::init();
+
     let mut rng = rand::rng();
     sleep(Duration::from_millis(rng.random_range(1000..5000))).await;
 
@@ -22,7 +23,7 @@ async fn main() {
     let node = match Node::new(simulation.state.clone()).await {
         Ok(node) => node,
         Err(err) => {
-            eprintln!("Node failed to initialise: {}", err);
+            error!("Failed to initialise node: {}", err);
             return;
         }
     };
@@ -32,6 +33,6 @@ async fn main() {
     });
 
     if let Err(err) = node.start().await {
-        eprintln!("Node failed to start: {}", err)
+        error!("Failed to start node: {}", err)
     }
 }

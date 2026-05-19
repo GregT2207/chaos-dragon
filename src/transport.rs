@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use log::error;
 use tokio::net::UdpSocket;
 
 use crate::types::NodeId;
@@ -140,7 +141,7 @@ impl TransportReceiver {
         match self.receive_and_build_message().await {
             Ok(message) => Some(message),
             Err(err) => {
-                eprintln!("Failed to receive and build message: {err}");
+                error!("Failed to receive and build message: {err}");
                 None
             }
         }
