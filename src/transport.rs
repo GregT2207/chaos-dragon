@@ -203,12 +203,12 @@ impl TransportSender {
     }
 
     pub async fn request_gossip(&self, dest_ip: IpAddr) -> io::Result<()> {
-        self.send_request_message(MessageKind::Identity, None, dest_ip)
+        self.send_request_message(MessageKind::Gossip, None, dest_ip)
             .await
     }
 
     pub async fn respond_gossip(&self, dest_ip: IpAddr, payload: String) -> io::Result<()> {
-        self.send_response_message(MessageKind::Identity, Some(payload), dest_ip)
+        self.send_response_message(MessageKind::Gossip, Some(payload), dest_ip)
             .await
     }
 

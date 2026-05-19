@@ -1,13 +1,17 @@
 use std::{
     collections::{HashMap, HashSet},
     env,
-    io::{Error, Result},
+    io::{Error, ErrorKind, Result},
     net::IpAddr,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
 };
 
 use time::{Duration as TimeDuration, OffsetDateTime};
-use tokio::{sync::RwLock, task};
+use tokio::{sync::RwLock, task, time::sleep};
 use trust_dns_resolver::{
     TokioAsyncResolver, name_server::TokioConnectionProvider, system_conf::read_system_conf,
 };
@@ -21,6 +25,7 @@ pub struct Discovery {
     sibling_expiry_time: TimeDuration,
     host_name: String,
     dns_resolver: TokioAsyncResolver,
+    dns_backoff_seconds: AtomicU64,
     simulated_state: Arc<SimulatedState>,
 }
 
@@ -49,25 +54,50 @@ impl Discovery {
             sibling_expiry_time: TimeDuration::milliseconds(sibling_expiry_time_ms),
             host_name: env::var("HOST_NAME").map_err(|e| Error::other(e))?,
             dns_resolver: TokioAsyncResolver::new(config, opts, TokioConnectionProvider::default()),
+            dns_backoff_seconds: AtomicU64::new(0),
             simulated_state,
         })
     }
 
     pub async fn discover_siblings(&self, transport_sender: TransportSender) -> Result<()> {
-        // Remove expired sibling records
+        self.remove_expired_siblings().await;
+
+        // Check simulated DNS availability
+        if !self.simulated_state.dns_available() {
+            let dns_backoff_seconds = self.dns_backoff_seconds.load(Ordering::Relaxed);
+            if dns_backoff_seconds > 0 {
+                println!(
+                    "Waiting {} seconds before attempting another DNS scan",
+                    dns_backoff_seconds
+                );
+                sleep(Duration::from_secs(dns_backoff_seconds)).await;
+                self.dns_backoff_seconds
+                    .store(dns_backoff_seconds * 2, Ordering::Relaxed);
+            } else {
+                self.dns_backoff_seconds.store(2, Ordering::Relaxed);
+            }
+
+            return Err(Error::new(ErrorKind::NotFound, "DNS lookup failed"));
+        }
+        self.dns_backoff_seconds.store(0, Ordering::Relaxed);
+
+        self.poll_and_identify_siblings(transport_sender).await
+    }
+
+    async fn remove_expired_siblings(&self) {
         let mut siblings = self.siblings.write().await;
         let now = OffsetDateTime::now_utc();
         siblings.retain(|_, sibling| now - sibling.last_seen < self.sibling_expiry_time);
+    }
 
-        // Find other sibling nodes with DNS scan
-        if !self.simulated_state.dns_available() {
-            Error::other("DNS lookup failed");
-        }
+    async fn poll_and_identify_siblings(&self, transport_sender: TransportSender) -> Result<()> {
+        let siblings = self.siblings.read().await;
         let lookup = self.dns_resolver.lookup_ip(&self.host_name).await?;
         let discovered_ips: HashSet<IpAddr> = lookup.into_iter().collect();
 
-        // Poll each node for identification
-        for ip in discovered_ips {
+        let existing_ips: HashSet<IpAddr> = siblings.values().map(|sibling| sibling.ip).collect();
+        for ip in discovered_ips.difference(&existing_ips) {
+            let ip = ip.clone();
             let sender = transport_sender.clone();
             task::spawn(async move { (sender.request_identification(ip).await, ip) });
         }

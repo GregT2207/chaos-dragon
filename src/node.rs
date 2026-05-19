@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use futures::future::join_all;
 use time::OffsetDateTime;
 use tokio::{sync::mpsc, task, time::interval};
 
@@ -55,6 +56,14 @@ impl Node {
                 interval.tick().await;
                 if let Err(err) = discovery.discover_siblings(transport_sender.clone()).await {
                     eprintln!("Error discovering siblings: {}", err);
+                    let target_ips: Vec<_> = {
+                        let siblings = discovery.siblings.read().await;
+                        siblings.values().map(|sibling| sibling.ip).collect()
+                    };
+                    let gossip_requests = target_ips
+                        .into_iter()
+                        .map(|ip| transport_sender.request_gossip(ip));
+                    join_all(gossip_requests).await;
                 }
             }
         });

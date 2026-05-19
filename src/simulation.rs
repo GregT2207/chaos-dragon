@@ -28,10 +28,10 @@ impl Simulation {
     }
 
     pub async fn start(&mut self) {
-        sleep(Duration::from_secs(3)).await;
-
         println!("Starting chaos simulation");
         loop {
+            sleep(Duration::from_secs(self.rng.random_range(3..30))).await;
+
             match self.rng.random_range(0..=1) {
                 0 => self.dns_failure().await,
                 _ => println!("It's your lucky day, punk"),
@@ -40,10 +40,15 @@ impl Simulation {
     }
 
     async fn dns_failure(&mut self) {
+        if !self.state.dns_available() {
+            return;
+        }
+
+        let failure_seconds = self.rng.random_range(1..=10);
+        println!("Simulating DNS failure for {} seconds", failure_seconds);
+
         self.state.dns_available.store(false, Ordering::Relaxed);
-
-        sleep(Duration::from_secs(self.rng.random_range(1..=10))).await;
-
+        sleep(Duration::from_secs(failure_seconds)).await;
         self.state.dns_available.store(true, Ordering::Relaxed);
     }
 }
