@@ -61,8 +61,6 @@ impl Discovery {
     }
 
     pub async fn discover_siblings(&self, transport_sender: TransportSender) -> Result<()> {
-        self.remove_expired_siblings().await;
-
         // Check simulated DNS availability
         if !self.simulated_state.dns_available() {
             let dns_backoff_seconds = self.dns_backoff_seconds.load(Ordering::Relaxed);
@@ -82,7 +80,10 @@ impl Discovery {
         }
         self.dns_backoff_seconds.store(0, Ordering::Relaxed);
 
-        self.poll_and_identify_siblings(transport_sender).await
+        self.poll_and_identify_siblings(transport_sender).await?;
+        self.remove_expired_siblings().await;
+
+        Ok(())
     }
 
     async fn remove_expired_siblings(&self) {
@@ -119,7 +120,17 @@ impl Discovery {
     }
 
     pub async fn record_siblings(&self, new_siblings: SiblingsMap) {
-        let mut siblings = self.siblings.write().await;
-        siblings.extend(new_siblings);
+        let mut existing_siblings = self.siblings.write().await;
+
+        for (new_sibling_key, new_sibling_value) in new_siblings {
+            // Don't update an existing record if it was seen more recently
+            if let Some(existing_sibling) = existing_siblings.get(&new_sibling_key)
+                && existing_sibling.last_seen > new_sibling_value.last_seen
+            {
+                continue;
+            }
+
+            existing_siblings.insert(new_sibling_key, new_sibling_value);
+        }
     }
 }
