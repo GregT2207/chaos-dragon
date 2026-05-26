@@ -2,7 +2,14 @@
 
 ## Description
 
-Chaos Dragon is an educational project that runs multiple nodes on an internal network that can communicate to cooperatively recover from simulated failures.
+Chaos Dragon is an educational project that runs multiple nodes on an internal network that communicate to cooperatively recover from simulated failures.
+
+The goal of the simulations is to stress test the system's ability to:
+
+- never crash
+- log descriptively and selectively for excellent observability
+- minimise pressure on failing services through throttling and exponential backoff
+- maximise delivery speed by maintaining the most current view of the network possible
 
 ## Architecture
 
