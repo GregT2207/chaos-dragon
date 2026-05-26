@@ -6,7 +6,7 @@ services:
         published: 0
         protocol: "udp"
         mode: "host"
-    scale: 16
+    scale: ${NODE_INSTANCES}
     tty: true
     environment:
       HOST_NAME: "node"
