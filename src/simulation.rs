@@ -18,6 +18,7 @@ pub struct SimulatedState {
     inbound_network_messages_available: AtomicBool,
     outbound_network_messages_available: AtomicBool,
     dns_available: AtomicBool,
+    messages_uncorrupted: AtomicBool,
 }
 
 impl Simulation {
@@ -28,6 +29,7 @@ impl Simulation {
                 inbound_network_messages_available: AtomicBool::new(true),
                 outbound_network_messages_available: AtomicBool::new(true),
                 dns_available: AtomicBool::new(true),
+                messages_uncorrupted: AtomicBool::new(true),
             }),
         }
     }
@@ -38,7 +40,7 @@ impl Simulation {
             sleep(Duration::from_secs(self.rng.random_range(8..30))).await; // random frequency
             let failure_seconds = self.rng.random_range(1..=30); // random duration
 
-            match self.rng.random_range(0..=3) {
+            match self.rng.random_range(0..=4) {
                 0 => {
                     self.run_simulation(
                         &self.state.inbound_network_messages_available,
@@ -58,6 +60,14 @@ impl Simulation {
                 2 => {
                     self.run_simulation(&self.state.dns_available, failure_seconds, "DNS failure")
                         .await
+                }
+                3 => {
+                    self.run_simulation(
+                        &self.state.messages_uncorrupted,
+                        failure_seconds,
+                        "corrupted messages",
+                    )
+                    .await
                 }
                 _ => info!("It's your lucky day, punk"),
             }
@@ -94,5 +104,9 @@ impl SimulatedState {
 
     pub fn dns_available(&self) -> bool {
         self.dns_available.load(Ordering::Relaxed)
+    }
+
+    pub fn messages_uncorrupted(&self) -> bool {
+        self.messages_uncorrupted.load(Ordering::Relaxed)
     }
 }

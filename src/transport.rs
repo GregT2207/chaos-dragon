@@ -8,6 +8,7 @@ use std::{
 };
 
 use log::{error, info, warn};
+use rand::RngExt;
 use time::OffsetDateTime;
 use tokio::{net::UdpSocket, sync::Mutex, time::sleep};
 
@@ -197,7 +198,18 @@ impl TransportReceiver {
 
     async fn receive_and_build_message(&mut self) -> io::Result<Message> {
         let (amt, src) = self.socket.recv_from(&mut self.buffer).await?;
-        Self::build_message(&self.buffer[..amt], src.ip())
+        let mut bytes = (&self.buffer[..amt]).to_vec();
+
+        let mut rng = rand::rng();
+        if !self.simulated_state.messages_uncorrupted() && rng.random_bool(1.0 / 4.0) {
+            let bytes_len = bytes.len();
+            let corrupted_byte = bytes.get_mut(rng.random_range(0..bytes_len));
+            if let Some(corrupted_byte) = corrupted_byte {
+                *corrupted_byte = rng.random_range(u8::MIN..u8::MAX);
+            }
+        }
+
+        Self::build_message(&bytes, src.ip())
     }
 
     pub fn build_message(bytes: &[u8], src_ip: IpAddr) -> io::Result<Message> {
