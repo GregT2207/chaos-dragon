@@ -1,6 +1,6 @@
 services:
   node:
-    build: .
+    build: ./node
     ports:
       - target: ${INTERNAL_PORT}
         published: 0
