@@ -7,7 +7,7 @@ use std::{
 };
 
 use futures::future::join_all;
-use log::{error, info};
+use log::{debug, error, info};
 use time::OffsetDateTime;
 use tokio::{sync::mpsc, task, time::interval};
 
@@ -31,11 +31,12 @@ pub struct Node {
 impl Node {
     pub async fn new(simulated_state: Arc<SimulatedState>) -> Result<Self> {
         let id = hostname::get()?.to_string_lossy().into_owned();
-        let (transport_receiver, transport_sender) = new_transport(id.clone()).await?;
+        let (transport_receiver, transport_sender) =
+            new_transport(id.clone(), Arc::clone(&simulated_state)).await?;
 
         Ok(Self {
             id: id.clone(),
-            discovery: Arc::new(Discovery::new(simulated_state)?),
+            discovery: Arc::new(Discovery::new(Arc::clone(&simulated_state))?),
             transport_receiver,
             transport_sender,
         })
@@ -87,7 +88,7 @@ impl Node {
             Self::handle_message(
                 &message,
                 self.transport_sender.clone(),
-                self.discovery.clone(),
+                Arc::clone(&self.discovery),
             )
             .await;
         }
@@ -100,7 +101,7 @@ impl Node {
         transport_sender: TransportSender,
         discovery: Arc<Discovery>,
     ) {
-        info!(
+        debug!(
             "Handling {} for \"{}\" from {}{}",
             if message.direction == MessageDirection::Request {
                 "request"
@@ -121,7 +122,7 @@ impl Node {
                 if let Err(err) =
                     Self::handle_identification_request(&message, transport_sender).await
                 {
-                    error!("Failed to respond to identification request: {}", err);
+                    error!("Failed to handle identification request: {}", err);
                 };
             }
             (MessageKind::Identity, MessageDirection::Response) => {

@@ -3,13 +3,11 @@ use std::{
     env,
     io::{Error, ErrorKind, Result},
     net::IpAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
     time::Duration,
 };
 
+use futures::lock::Mutex;
 use log::info;
 use time::{Duration as TimeDuration, OffsetDateTime};
 use tokio::{sync::RwLock, task, time::sleep};
@@ -17,7 +15,10 @@ use trust_dns_resolver::{
     TokioAsyncResolver, name_server::TokioConnectionProvider, system_conf::read_system_conf,
 };
 
-use crate::{simulation::SimulatedState, transport::TransportSender, types::NodeId};
+use crate::{
+    backoff::ExponentialBackoff, simulation::SimulatedState, transport::TransportSender,
+    types::NodeId,
+};
 
 pub type SiblingsMap = HashMap<NodeId, Sibling>;
 
@@ -26,7 +27,7 @@ pub struct Discovery {
     sibling_expiry_time: TimeDuration,
     host_name: String,
     dns_resolver: TokioAsyncResolver,
-    dns_backoff_seconds: AtomicU64,
+    backoff: Mutex<ExponentialBackoff>,
     simulated_state: Arc<SimulatedState>,
 }
 
@@ -55,35 +56,37 @@ impl Discovery {
             sibling_expiry_time: TimeDuration::milliseconds(sibling_expiry_time_ms),
             host_name: env::var("HOST_NAME").map_err(|e| Error::other(e))?,
             dns_resolver: TokioAsyncResolver::new(config, opts, TokioConnectionProvider::default()),
-            dns_backoff_seconds: AtomicU64::new(0),
+            backoff: Mutex::new(ExponentialBackoff::new()),
             simulated_state,
         })
     }
 
     pub async fn discover_siblings(&self, transport_sender: TransportSender) -> Result<()> {
-        // Check simulated DNS availability
-        if !self.simulated_state.dns_available() {
-            let dns_backoff_seconds = self.dns_backoff_seconds.load(Ordering::Relaxed);
-            if dns_backoff_seconds > 0 {
-                info!(
-                    "Waiting {} seconds before attempting another DNS scan",
-                    dns_backoff_seconds
-                );
-                sleep(Duration::from_secs(dns_backoff_seconds)).await;
-                self.dns_backoff_seconds
-                    .store(dns_backoff_seconds * 2, Ordering::Relaxed);
-            } else {
-                self.dns_backoff_seconds.store(2, Ordering::Relaxed);
-            }
-
-            return Err(Error::new(ErrorKind::NotFound, "DNS lookup failed"));
-        }
-        self.dns_backoff_seconds.store(0, Ordering::Relaxed);
-
+        // Sibling records won't be removed until DNS is available and new poll succeeds
+        self.check_network_backoff().await?;
         self.poll_and_identify_siblings(transport_sender).await?;
         self.remove_expired_siblings().await;
 
         Ok(())
+    }
+
+    async fn check_network_backoff(&self) -> Result<()> {
+        let remaining_wait: Duration;
+        {
+            let mut backoff = self.backoff.lock().await;
+
+            if self.simulated_state.outbound_network_messages_available()
+                && self.simulated_state.dns_available()
+            {
+                backoff.reset();
+                return Ok(());
+            }
+
+            remaining_wait = backoff.remaining_wait();
+        }
+
+        sleep(remaining_wait).await;
+        return Err(Error::new(ErrorKind::NotFound, format!("DNS unavailable")));
     }
 
     async fn remove_expired_siblings(&self) {

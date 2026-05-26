@@ -1,21 +1,27 @@
 use std::{
     env, fmt,
-    io::{self, Error},
+    io::{self, Error, ErrorKind},
     net::{IpAddr, SocketAddr},
     str::{FromStr, from_utf8},
     sync::Arc,
+    time::Duration,
 };
 
-use log::error;
-use tokio::net::UdpSocket;
+use log::{error, info, warn};
+use time::OffsetDateTime;
+use tokio::{net::UdpSocket, sync::Mutex, time::sleep};
 
-use crate::types::NodeId;
+use crate::{backoff::ExponentialBackoff, simulation::SimulatedState, types::NodeId};
 
 type Buffer = [u8; 1024];
 
 pub struct TransportReceiver {
     socket: Arc<UdpSocket>,
     buffer: Buffer,
+    suspicious_inbound_message_gap: Duration,
+    suspected_inbound_message_failure: bool,
+    last_message_received: OffsetDateTime,
+    simulated_state: Arc<SimulatedState>,
 }
 
 #[derive(Clone)]
@@ -23,6 +29,8 @@ pub struct TransportSender {
     socket: Arc<UdpSocket>,
     src_node_id: NodeId,
     internal_port: u16,
+    simulated_state: Arc<SimulatedState>,
+    backoff: Arc<Mutex<ExponentialBackoff>>,
 }
 
 #[repr(usize)]
@@ -113,7 +121,10 @@ impl fmt::Display for MessageKind {
     }
 }
 
-pub async fn new(src_node_id: NodeId) -> io::Result<(TransportReceiver, TransportSender)> {
+pub async fn new(
+    src_node_id: NodeId,
+    simulated_state: Arc<SimulatedState>,
+) -> io::Result<(TransportReceiver, TransportSender)> {
     let internal_ip_addr = IpAddr::from([0, 0, 0, 0]);
     let internal_port = env::var("INTERNAL_PORT")
         .map_err(|e| Error::other(e))?
@@ -123,22 +134,59 @@ pub async fn new(src_node_id: NodeId) -> io::Result<(TransportReceiver, Transpor
 
     let socket = Arc::new(UdpSocket::bind(socket_addr).await?);
 
+    let suspicious_inbound_message_gap_ms = env::var("SUSPICIOUS_INBOUND_MESSAGE_GAP_MS")
+        .map_err(|e| Error::other(e))?
+        .parse::<u64>()
+        .map_err(|e| Error::other(e))?;
+
     Ok((
         TransportReceiver {
-            socket: socket.clone(),
+            socket: Arc::clone(&socket),
             buffer: [0; 1024],
+            suspicious_inbound_message_gap: Duration::from_millis(
+                suspicious_inbound_message_gap_ms,
+            ),
+            suspected_inbound_message_failure: false,
+            last_message_received: OffsetDateTime::now_utc(),
+            simulated_state: Arc::clone(&simulated_state),
         },
         TransportSender {
-            socket: socket.clone(),
+            socket: Arc::clone(&socket),
             src_node_id,
-            internal_port: internal_port,
+            internal_port,
+            simulated_state: Arc::clone(&simulated_state),
+            backoff: Arc::new(Mutex::new(ExponentialBackoff::new())),
         },
     ))
 }
 
 impl TransportReceiver {
     pub async fn get_message(&mut self) -> Option<Message> {
-        match self.receive_and_build_message().await {
+        // After a suspiciously long gap in messages respond by throttling the loop slightly
+        let time_since_last_message_received =
+            OffsetDateTime::now_utc() - self.last_message_received;
+        if time_since_last_message_received > self.suspicious_inbound_message_gap {
+            self.suspected_inbound_message_failure = true;
+            warn!(
+                "No messages received in {} seconds, is there a network failure?",
+                time_since_last_message_received.as_seconds_f32().floor()
+            );
+            sleep(Duration::from_secs(1)).await;
+        }
+
+        // Inbound network message failure would be silent so no error can be returned
+        if !self.simulated_state.inbound_network_messages_available() {
+            return None;
+        }
+
+        let received_message = self.receive_and_build_message().await;
+        self.last_message_received = OffsetDateTime::now_utc();
+        if self.suspected_inbound_message_failure == true {
+            self.suspected_inbound_message_failure = false;
+            info!("Received a message - inbound network availability confirmed")
+        }
+
+        match received_message {
             Ok(message) => Some(message),
             Err(err) => {
                 error!("Failed to receive and build message: {err}");
@@ -240,6 +288,8 @@ impl TransportSender {
         payload: Option<String>,
         dest_ip: IpAddr,
     ) -> io::Result<()> {
+        self.check_network_backoff().await?;
+
         let message = Message {
             src_ip: None,
             src_node_id: self.src_node_id.clone(),
@@ -254,6 +304,26 @@ impl TransportSender {
             .await?;
 
         Ok(())
+    }
+
+    async fn check_network_backoff(&self) -> io::Result<()> {
+        let remaining_wait: Duration;
+        {
+            let mut backoff = self.backoff.lock().await;
+
+            if self.simulated_state.outbound_network_messages_available() {
+                backoff.reset();
+                return Ok(());
+            }
+
+            remaining_wait = backoff.remaining_wait();
+        }
+
+        sleep(remaining_wait).await;
+        return Err(Error::new(
+            ErrorKind::NotFound,
+            format!("Network unavailable"),
+        ));
     }
 }
 
