@@ -86,7 +86,7 @@ impl Discovery {
         }
 
         sleep(remaining_wait).await;
-        return Err(Error::new(ErrorKind::NotFound, format!("DNS unavailable")));
+        return Err(Error::new(ErrorKind::NotFound, "DNS unavailable"));
     }
 
     async fn remove_expired_siblings(&self) {

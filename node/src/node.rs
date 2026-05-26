@@ -108,10 +108,10 @@ impl Node {
             } else {
                 "response"
             },
-            message.kind.to_string().to_lowercase(),
+            message.kind.to_string(),
             message.src_node_id,
             if let Some(payload) = message.payload.clone() {
-                format!(": {}", payload.to_string())
+                format!(": {}", payload)
             } else {
                 "".to_string()
             },
@@ -173,7 +173,7 @@ impl Node {
         discovery: Arc<Discovery>,
     ) -> Result<()> {
         let siblings = discovery.siblings.read().await;
-        if siblings.len() == 0 {
+        if siblings.is_empty() {
             info!("Not aware of any siblings - ignoring gossip request");
             return Ok(());
         }

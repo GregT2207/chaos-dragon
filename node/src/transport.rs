@@ -182,7 +182,7 @@ impl TransportReceiver {
 
         let received_message = self.receive_and_build_message().await;
         self.last_message_received = OffsetDateTime::now_utc();
-        if self.suspected_inbound_message_failure == true {
+        if self.suspected_inbound_message_failure {
             self.suspected_inbound_message_failure = false;
             info!("Received a message - inbound network availability confirmed")
         }
@@ -332,10 +332,7 @@ impl TransportSender {
         }
 
         sleep(remaining_wait).await;
-        return Err(Error::new(
-            ErrorKind::NotFound,
-            format!("Network unavailable"),
-        ));
+        return Err(Error::new(ErrorKind::NotFound, "Network unavailable"));
     }
 }
 
