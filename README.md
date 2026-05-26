@@ -25,3 +25,6 @@ The goal of the simulations is to stress test the system's ability to:
 - Use Docker Compose to launch multiple instances of the peer nodes
   - `docker compose up`
 - Monitor the logs to see simulated failures and node recovery behaviour
+
+## Preview
+<img width="743" height="720" alt="Screenshot 2026-05-26 at 22 54 19" src="https://github.com/user-attachments/assets/ad33cb53-0a23-4136-8bea-80fe43b08a57" />
