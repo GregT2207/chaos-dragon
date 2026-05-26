@@ -173,9 +173,14 @@ impl Node {
         discovery: Arc<Discovery>,
     ) -> Result<()> {
         let siblings = discovery.siblings.read().await;
-        let payload = Self::build_gossip_payload(&siblings);
+        if siblings.len() == 0 {
+            info!("Not aware of any siblings - ignoring gossip request");
+            return Ok(());
+        }
 
+        let payload = Self::build_gossip_payload(&siblings);
         let src_ip = Self::get_source_ip(message)?;
+
         transport_sender.respond_gossip(src_ip, payload).await?;
 
         Ok(())
