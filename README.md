@@ -13,9 +13,10 @@ The goal of the simulations is to stress test the system's ability to:
 
 ## Architecture
 
+- Network node written in **Rust** with the **Tokio** async runtime - routes messages between peers
+- CLI written in **Go** - delivers messages into the network and logs the response along with metrics
 - **Docker** network to support DNS-based discovery between scaled peer node instances
 - Lightweight plain-text protocol over UDP for asynchronous request/response messages
-- Peer node application written in **Rust** with the **Tokio** async runtime
 
 ## Instructions
 
@@ -27,4 +28,5 @@ The goal of the simulations is to stress test the system's ability to:
 - Monitor the logs to see simulated failures and node recovery behaviour
 
 ## Preview
+
 <img width="743" height="720" alt="Screenshot 2026-05-26 at 22 54 19" src="https://github.com/user-attachments/assets/ad33cb53-0a23-4136-8bea-80fe43b08a57" />

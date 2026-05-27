@@ -15,3 +15,15 @@ services:
       DISCOVER_SIBLINGS_INTERVAL_MS: 5000
       SIBLING_EXPIRY_TIME_MS: 15000
       SUSPICIOUS_INBOUND_MESSAGE_GAP_MS: 10000
+  cli:
+    build: ./cli
+    stdin_open: true
+    tty: true
+    command: >
+      sh -c '
+        echo "==================================";
+        echo "🐉 Chaos Dragon CLI";
+        echo "🐲 \"chaos-dragon -h\" for instructions";
+        echo "==================================";
+        sleep infinity
+      '
