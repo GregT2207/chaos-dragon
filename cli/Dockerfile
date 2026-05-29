@@ -5,8 +5,3 @@ RUN go build -o chaos-dragon
 
 FROM debian:bookworm-slim
 COPY --from=compiler /app/chaos-dragon /usr/local/bin/chaos-dragon
-CMD echo "" \
- && echo "==================================" \
- && echo "🐉 Chaos Dragon CLI" \
- && echo "🐲 \"chaos-dragon -h\" for instructions" \
- && echo "==================================" \
