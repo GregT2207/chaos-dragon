@@ -1,6 +1,7 @@
 package main
 
 import (
+	"chaos-dragon/cli/internal/commands"
 	"fmt"
 	"os"
 )
@@ -12,5 +13,19 @@ func main() {
 		return
 	}
 
-	fmt.Println("CLI is not yet implemented!")
+	switch args[0] {
+	case "ping":
+		commands.Ping()
+	case "log":
+		commands.Log()
+	case "scan":
+		commands.Scan()
+	case "broadcast":
+		commands.Broadcast()
+	default:
+		fmt.Printf("Unknown command: %s\n", args[0])
+		os.Exit(1)
+	}
+
+	os.Exit(0)
 }

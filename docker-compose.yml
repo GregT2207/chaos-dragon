@@ -1,13 +1,6 @@
 services:
   node:
     build: ./node
-    ports:
-      - target: ${INTERNAL_PORT}
-        published: 0
-        protocol: "udp"
-        mode: "host"
-    scale: ${NODE_INSTANCES}
-    tty: true
     environment:
       HOST_NAME: "node"
       INTERNAL_PORT: ${INTERNAL_PORT}
@@ -15,8 +8,19 @@ services:
       DISCOVER_SIBLINGS_INTERVAL_MS: 5000
       SIBLING_EXPIRY_TIME_MS: 15000
       SUSPICIOUS_INBOUND_MESSAGE_GAP_MS: 10000
+    ports:
+      - target: ${INTERNAL_PORT}
+        published: 0
+        protocol: "udp"
+        mode: "host"
+    scale: ${NODE_INSTANCES}
+    tty: true
+
   cli:
     build: ./cli
+    environment:
+      NODE_HOST_NAME: "node"
+      AWAIT_RESPONSE_TIMEOUT_MS: 5000
     stdin_open: true
     tty: true
     command: >
