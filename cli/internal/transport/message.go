@@ -24,6 +24,7 @@ const (
 	Broadcast
 )
 
+// Unimplemented
 func bytesToMessage(bytes []byte) (Message, error) {
 	return Message{}, nil
 }

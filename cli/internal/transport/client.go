@@ -41,16 +41,39 @@ func (client *Client) SendMessageRequest(kind MessageKind, payload string) error
 	return client.sendMessage(message)
 }
 
-func (client *Client) GetMessageResponse(kind MessageKind) (string, error) {
-	start := time.Now()
-	for {
-		// Unimplemented - receive UDP packets here
-		if time.Since(start) >= time.Duration(client.awaitResponseTimeoutMs)*time.Millisecond {
-			return "", fmt.Errorf("Timed out waiting for response (message kind %d)", client.awaitResponseTimeoutMs)
-		}
+func (client *Client) GetMessageResponse(kind MessageKind) (Message, error) {
+	resolvedAddr, err := net.ResolveUDPAddr("udp", "localhost:3000")
+	if err != nil {
+		return Message{}, err
 	}
 
-	return "", nil
+	conn, err := net.ListenUDP("udp", resolvedAddr)
+	if err != nil {
+		return Message{}, err
+	}
+	defer conn.Close()
+
+	buffer := make([]byte, 1024)
+	start := time.Now()
+	for {
+		n, _, err := conn.ReadFromUDP(buffer)
+		if err != nil {
+			return Message{}, err
+		}
+
+		if n > 0 {
+			message, err := bytesToMessage(buffer[:n])
+			if err != nil {
+				return Message{}, err
+			}
+
+			return message, nil
+		}
+
+		if time.Since(start) >= time.Duration(client.awaitResponseTimeoutMs)*time.Millisecond {
+			return Message{}, fmt.Errorf("Timed out waiting for response (message kind %d)", client.awaitResponseTimeoutMs)
+		}
+	}
 }
 
 func (client *Client) sendMessage(message Message) error {
