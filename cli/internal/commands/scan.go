@@ -10,7 +10,7 @@ func Scan() {
 	var client transport.Client
 	client.Init()
 
-	err := client.SendMessageRequest(transport.Scan, "")
+	err := client.SendRequestMessage(transport.Scan, "")
 	if err == nil {
 		fmt.Printf("Failed to send scan command: %s", err)
 	} else {

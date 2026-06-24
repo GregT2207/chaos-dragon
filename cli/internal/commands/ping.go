@@ -10,7 +10,7 @@ func Ping() {
 	var client transport.Client
 	client.Init()
 
-	err := client.SendMessageRequest(transport.Ping, "")
+	err := client.SendRequestMessage(transport.Ping, "")
 	if err == nil {
 		fmt.Printf("Failed to send ping command: %s", err)
 	} else {

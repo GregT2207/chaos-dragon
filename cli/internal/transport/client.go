@@ -36,12 +36,12 @@ func (client *Client) Init() error {
 	return nil
 }
 
-func (client *Client) SendMessageRequest(kind MessageKind, payload string) error {
+func (client *Client) SendRequestMessage(kind MessageKind, payload string) error {
 	var message Message = Message{"ip", "external", Request, kind, payload}
 	return client.sendMessage(message)
 }
 
-func (client *Client) GetMessageResponse(kind MessageKind) (Message, error) {
+func (client *Client) GetResponseMessage(kind MessageKind) (Message, error) {
 	resolvedAddr, err := net.ResolveUDPAddr("udp", "localhost:3000")
 	if err != nil {
 		return Message{}, err
@@ -112,12 +112,12 @@ func (client *Client) getActiveNodeAddress() (net.IP, error) {
 		}
 
 		for _, ip := range ips {
-			err = client.SendMessageRequest(Ping, "")
+			err = client.SendRequestMessage(Ping, "")
 			if err != nil {
 				return net.IP{}, err
 			}
 
-			_, err = client.GetMessageResponse(Ping)
+			_, err = client.GetResponseMessage(Ping)
 			if err == nil {
 				return ip, nil
 			}

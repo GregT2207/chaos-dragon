@@ -10,7 +10,7 @@ func Broadcast() {
 	var client transport.Client
 	client.Init()
 
-	err := client.SendMessageRequest(transport.Broadcast, "")
+	err := client.SendRequestMessage(transport.Broadcast, "")
 	if err == nil {
 		fmt.Printf("Failed to send broadcast command: %s", err)
 	} else {
