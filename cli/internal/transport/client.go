@@ -12,6 +12,7 @@ import (
 
 type Client struct {
 	nodeHostName           string
+	lastDiscoveredIp       net.IP
 	awaitResponseTimeoutMs uint16
 }
 
@@ -79,11 +80,18 @@ func (client *Client) GetResponseMessage(kind MessageKind) (Message, error) {
 }
 
 func (client *Client) sendMessage(message Message) error {
-	addr, err := client.getActiveNodeAddress()
-	if err != nil {
-		return err
+	var addr net.IP
+	var err error
+	if len(client.lastDiscoveredIp) == 0 {
+		addr, err := client.getActiveNodeAddress()
+		if err != nil {
+			return err
+		}
+		slog.Debug("Found address of an active node", "address", addr)
+	} else {
+		addr = client.lastDiscoveredIp
+		slog.Debug("Using last discovered address", "address", addr)
 	}
-	slog.Debug("Found address of an active node", "address", addr)
 
 	resolvedAddr, err := net.ResolveUDPAddr("udp", addr.String())
 	if err != nil {
@@ -120,6 +128,8 @@ func (client *Client) getActiveNodeAddress() (net.IP, error) {
 		slog.Debug("Found ips", "ip count", len(ips))
 
 		for _, ip := range ips {
+			client.lastDiscoveredIp = ip
+
 			err = client.SendRequestMessage(Ping, "")
 			if err != nil {
 				return net.IP{}, err
@@ -134,5 +144,6 @@ func (client *Client) getActiveNodeAddress() (net.IP, error) {
 		}
 	}
 
+	client.lastDiscoveredIp = net.IP{}
 	return net.IP{}, errors.New("No active nodes found")
 }
