@@ -20,6 +20,7 @@ services:
     build: ./cli
     environment:
       NODE_HOST_NAME: "node"
+      LOG_LEVEL: ${LOG_LEVEL}
       AWAIT_RESPONSE_TIMEOUT_MS: 5000
     stdin_open: true
     tty: true
